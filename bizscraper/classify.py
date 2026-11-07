@@ -12,6 +12,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Iterable
 
 import anthropic
@@ -154,6 +157,7 @@ class Classifier:
         self.client = client or anthropic.Anthropic()
         self.model = model
         self.usage = {"input_tokens": 0, "output_tokens": 0, "requests": 0}
+        self._lock = threading.Lock()
 
     def classify(self, rows: list, categories: list[str]) -> list[dict] | None:
         cats = "\n".join(categories) if categories else "(none yet)"
@@ -166,9 +170,10 @@ class Classifier:
             system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": f"Existing categories:\n{cats}\n\nItems:\n{render(rows)}"}],
         )
-        self.usage["requests"] += 1
-        self.usage["input_tokens"] += response.usage.input_tokens + (response.usage.cache_read_input_tokens or 0)
-        self.usage["output_tokens"] += response.usage.output_tokens
+        with self._lock:
+            self.usage["requests"] += 1
+            self.usage["input_tokens"] += response.usage.input_tokens + (response.usage.cache_read_input_tokens or 0)
+            self.usage["output_tokens"] += response.usage.output_tokens
         if response.stop_reason in ("refusal", "max_tokens"):
             log.warning("batch skipped: stop_reason=%s", response.stop_reason)
             return None
@@ -193,27 +198,55 @@ def save(conn, model: str, items: list[dict], valid_ids: set[int]) -> int:
     return n
 
 
-def run(conn, min_points: int = 200, limit: int | None = None, classifier: Classifier | None = None) -> int:
+def run(conn, min_points: int = 200, limit: int | None = None, classifier: Classifier | None = None,
+        workers: int = 4, max_minutes: float | None = None) -> int:
+    """Classify in parallel batches. Stops cleanly after max_minutes so results are always saved;
+    rows left over are picked up by the next run."""
     ensure_schema(conn)
     rows = select_rows(conn, min_points, limit)
-    log.info("%d rows to classify in %d requests", len(rows), -(-len(rows) // BATCH))
+    chunks = [rows[i:i + BATCH] for i in range(0, len(rows), BATCH)]
+    log.info("%d rows to classify in %d requests", len(rows), len(chunks))
     classifier = classifier or Classifier()
+    deadline = time.monotonic() + max_minutes * 60 if max_minutes is not None else None
     done = 0
-    for i in range(0, len(rows), BATCH):
-        chunk = rows[i:i + BATCH]
-        try:
-            items = classifier.classify(chunk, existing_categories(conn))
-        except anthropic.APIStatusError as e:
-            if e.status_code in (400, 401, 403, 404):
-                raise
-            log.warning("batch %d failed (%s), will retry next run", i // BATCH, e.status_code)
-            continue
-        if items is None:
-            continue
-        done += save(conn, classifier.model, items, {r["id"] for r in chunk})
-        u = classifier.usage
-        log.info("classified %d/%d (requests %d, in %d tok, out %d tok)", done, len(rows),
-                 u["requests"], u["input_tokens"], u["output_tokens"])
+    pending: dict = {}
+    queue = iter(chunks)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        def submit() -> bool:
+            if deadline is not None and time.monotonic() > deadline:
+                return False
+            chunk = next(queue, None)
+            if chunk is None:
+                return False
+            pending[pool.submit(classifier.classify, chunk, existing_categories(conn))] = chunk
+            return True
+
+        for _ in range(workers):
+            submit()
+        while pending:
+            finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+            for fut in finished:
+                chunk = pending.pop(fut)
+                try:
+                    items = fut.result()
+                except anthropic.APIStatusError as e:
+                    if e.status_code in (400, 401, 403, 404):
+                        for f in pending:
+                            f.cancel()
+                        raise
+                    log.warning("batch failed (%s), will retry next run", e.status_code)
+                    items = None
+                except anthropic.APIConnectionError:
+                    log.warning("batch failed (connection), will retry next run")
+                    items = None
+                if items is not None:
+                    done += save(conn, classifier.model, items, {r["id"] for r in chunk})
+                u = classifier.usage
+                log.info("classified %d/%d (requests %d, in %d tok, out %d tok)", done, len(rows),
+                         u["requests"], u["input_tokens"], u["output_tokens"])
+                submit()
+    if deadline is not None and time.monotonic() > deadline:
+        log.info("time budget reached; %d rows left for the next run", len(rows) - done)
     return done
 
 

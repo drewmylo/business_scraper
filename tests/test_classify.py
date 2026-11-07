@@ -72,3 +72,22 @@ def test_refusal_skips_batch():
     msgs.create = lambda **kw: SimpleNamespace(stop_reason="refusal", content=[],
                                                usage=SimpleNamespace(input_tokens=1, output_tokens=0, cache_read_input_tokens=0))
     assert classify.run(conn, classifier=clf) == 0
+
+
+def test_time_budget_stops_starting_batches():
+    conn = make_conn()
+    clf, msgs = fake_classifier()
+    assert classify.run(conn, classifier=clf, max_minutes=0) == 0
+    assert msgs.calls == []
+
+
+def test_snapshot_copies_database(tmp_path):
+    from bizscraper import cli
+    src = tmp_path / "a.db"
+    conn = db.connect(src)
+    db.upsert_candidates(conn, [{"source": "x", "source_id": "1"}])
+    conn.commit()
+    out = tmp_path / "snap.db"
+    assert cli.main(["--db", str(src), "snapshot", str(out)]) == 0
+    import sqlite3
+    assert sqlite3.connect(out).execute("SELECT COUNT(*) FROM candidates").fetchone()[0] == 1

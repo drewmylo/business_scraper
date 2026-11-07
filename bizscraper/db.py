@@ -86,7 +86,7 @@ def connect(path: str | Path | None = None) -> sqlite3.Connection:
     path = Path(path or os.environ.get("BIZSCRAPER_DB") or DEFAULT_PATH)
     if str(path) != ":memory:":
         path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=60, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)

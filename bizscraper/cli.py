@@ -101,7 +101,8 @@ def cmd_classify(conn, args) -> int:
     if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
         log.error("set ANTHROPIC_API_KEY to classify (https://console.anthropic.com)")
         return 1
-    n = classify.run(conn, min_points=args.min_points, limit=args.limit)
+    n = classify.run(conn, min_points=args.min_points, limit=args.limit, workers=args.workers,
+                     max_minutes=args.max_minutes)
     log.info("classified %d rows", n)
     return 0
 
@@ -121,6 +122,18 @@ def cmd_categories(conn, args) -> int:
     for r in rows:
         print(f"{r['category'][:45]:45} {r['businesses']:>4} {r['with_revenue'] or 0:>4} "
               f"{r['max_mrr_usd'] or 0:>9,.0f} {r['b2b'] or 0:>4}  {r['industries']}")
+    return 0
+
+
+def cmd_snapshot(conn, args) -> int:
+    """Consistent single-file copy of the database (safe with WAL), for upload."""
+    import sqlite3
+    Path(args.out).unlink(missing_ok=True)
+    dest = sqlite3.connect(args.out)
+    conn.backup(dest)
+    dest.execute("PRAGMA journal_mode=DELETE")
+    dest.close()
+    log.info("wrote %s", args.out)
     return 0
 
 
@@ -166,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("classify", help="tag and group businesses with Claude (needs ANTHROPIC_API_KEY)")
     c.add_argument("--min-points", type=int, default=200, help="Show HN / Product Hunt popularity threshold")
     c.add_argument("--limit", type=int, help="classify at most this many rows")
+    c.add_argument("--workers", type=int, default=4, help="parallel requests")
+    c.add_argument("--max-minutes", type=float, help="stop starting new batches after this long")
     c.set_defaults(fn=cmd_classify)
 
     cg = sub.add_parser("categories", help="rank categories by overseas proof")
@@ -173,6 +188,10 @@ def main(argv: list[str] | None = None) -> int:
     cg.add_argument("--min-items", type=int, default=2)
     cg.add_argument("--out", help="write CSV instead of printing")
     cg.set_defaults(fn=cmd_categories)
+
+    sn = sub.add_parser("snapshot", help="write a consistent copy of the database")
+    sn.add_argument("out")
+    sn.set_defaults(fn=cmd_snapshot)
 
     e = sub.add_parser("export", help="export candidates to CSV")
     e.add_argument("--out", default="data/candidates.csv")
