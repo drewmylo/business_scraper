@@ -27,3 +27,26 @@ def test_producthunt_post_row():
     assert row["tags"] == ["SaaS"] and row["popularity"] == 50
     conn = db.connect(":memory:")
     assert db.upsert_candidates(conn, [row]) == 1
+
+
+def test_reddit_rows_and_sync():
+    from bizscraper.sources import reddit
+
+    post = {"id": "abc", "name": "t3_abc", "subreddit": "sweatystartup", "title": "My pressure washing business",
+            "selftext": "Year two, we do $18k/month in revenue", "is_self": True, "score": 400,
+            "num_comments": 120, "created_utc": 1_700_000_000}
+    comment = {"name": "t1_x", "body": "Mobile detailing here, about $6,000 a month", "body_html": "", "score": 50,
+               "created_utc": 1_700_000_100}
+
+    class FakeReddit:
+        def search(self, sub, q, pages=3):
+            return [post] if sub == "sweatystartup" and q == "revenue" else []
+
+        def top_comments(self, post_id):
+            return [comment, {"name": "t1_y", "body": "congrats!", "body_html": ""}]
+
+    row = reddit.post_row(post)
+    assert row["revenue_monthly"] == 18000 and row["tags"] == ["r/sweatystartup"]
+    conn = db.connect(":memory:")
+    assert reddit.sync(conn, client=FakeReddit()) == 2
+    assert reddit.sync(conn, client=FakeReddit()) == 1  # thread already done, post re-upserted

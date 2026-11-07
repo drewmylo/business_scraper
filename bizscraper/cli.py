@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 
 from . import db
-from .sources import abn, abs as abs_source, hn, producthunt
+from .sources import abn, abs as abs_source, hn, producthunt, reddit
 
 log = logging.getLogger("bizscraper")
 
@@ -32,8 +32,9 @@ SOURCES = {
     "hn-revenue": lambda conn, a: hn.sync_revenue(conn, thread_limit=a.limit),
     "producthunt": lambda conn, a: producthunt.sync(conn, max_pages=a.limit),
     "abs": lambda conn, a: abs_source.sync(conn),
+    "reddit": lambda conn, a: reddit.sync(conn, thread_limit=a.limit),
 }
-NEEDS_KEY = {"producthunt": "PRODUCTHUNT_TOKEN"}
+NEEDS_KEY = {"producthunt": "PRODUCTHUNT_TOKEN", "reddit": "REDDIT_CLIENT_ID"}
 
 
 def cmd_sync(conn, args) -> int:
@@ -125,6 +126,30 @@ def cmd_categories(conn, args) -> int:
     return 0
 
 
+def cmd_markets(conn, args) -> int:
+    from . import markets
+    if args.map:
+        if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+            log.error("set ANTHROPIC_API_KEY to map categories")
+            return 1
+        markets.run(conn)
+    rows = markets.report(conn, top=args.top, min_items=args.min_items, market_type=args.type)
+    cols = ["market", "market_type", "businesses", "with_revenue", "max_mrr_usd", "total_mrr_usd", "b2b_pct",
+            "industries", "examples"]
+    if args.out:
+        with open(args.out, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(cols)
+            w.writerows([[r[c] for c in cols] for r in rows])
+        log.info("wrote %s", args.out)
+        return 0
+    print(f"{'market':42} {'type':10} {'biz':>4} {'rev':>4} {'max MRR':>9} {'B2B%':>5}  examples")
+    for r in rows:
+        print(f"{r['market'][:42]:42} {r['market_type'][:10]:10} {r['businesses']:>4} {r['with_revenue'] or 0:>4} "
+              f"{r['max_mrr_usd'] or 0:>9,.0f} {r['b2b_pct'] or 0:>5.0f}  {(r['examples'] or '')[:60]}")
+    return 0
+
+
 def cmd_snapshot(conn, args) -> int:
     """Consistent single-file copy of the database (safe with WAL), for upload."""
     import sqlite3
@@ -188,6 +213,14 @@ def main(argv: list[str] | None = None) -> int:
     cg.add_argument("--min-items", type=int, default=2)
     cg.add_argument("--out", help="write CSV instead of printing")
     cg.set_defaults(fn=cmd_categories)
+
+    mk = sub.add_parser("markets", help="merge categories into markets (--map) and rank them")
+    mk.add_argument("--map", action="store_true", help="map new categories with Claude first")
+    mk.add_argument("--type", help="only this market type, e.g. service or software")
+    mk.add_argument("--top", type=int, default=60)
+    mk.add_argument("--min-items", type=int, default=3)
+    mk.add_argument("--out", help="write CSV instead of printing")
+    mk.set_defaults(fn=cmd_markets)
 
     sn = sub.add_parser("snapshot", help="write a consistent copy of the database")
     sn.add_argument("out")

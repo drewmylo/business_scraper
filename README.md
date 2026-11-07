@@ -10,6 +10,7 @@ underserved in Australia.
 | --- | --- | --- | --- |
 | `bizscraper sync hn-show` | Hacker News (Algolia API) | none | Every Show HN launch since 2007, then only new ones |
 | `bizscraper sync hn-revenue` | Hacker News (Algolia API) | none | Stories that state revenue, and founders' comments in Ask HN "what does your side project make" threads |
+| `bizscraper sync reddit` | Reddit Data API | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | Owners describing their business and revenue in r/sweatystartup, r/smallbusiness, r/Entrepreneur, trade and e-commerce subreddits |
 | `bizscraper sync producthunt` | Product Hunt API v2 | `PRODUCTHUNT_TOKEN` | Launches with tagline, topics, votes |
 | `bizscraper sync abs` | ABS Data API, Australian Industry (8155) | none | Employment, sales, profit by ANZSIC industry, to size AU customer pools |
 | `bizscraper abn "name"` | ABN Lookup | `ABN_LOOKUP_GUID` | Australian businesses trading under a name |
@@ -37,6 +38,14 @@ server-side refusal fallbacks (`fallbacks: "default"`), so a declined batch is r
 how many report their own revenue, and the largest and total monthly revenue. These are the
 categories to take into the Australian checks.
 
+## Merging categories into markets
+
+`bizscraper markets --map` sends the category names (not the rows) to Claude in chunks of 250 and
+maps each to one of a few hundred markets, typed as software, service, ecommerce or physical product,
+content, marketplace, or community. `bizscraper markets` then ranks markets by how many businesses
+report their own revenue; `--type service` narrows to one kind. Cheap: about 15 requests for the
+current 3,300 categories.
+
 ## Running locally
 
 ```bash
@@ -56,7 +65,7 @@ The first `hn-show` run backfills about 215,000 posts and takes about 4 minutes.
 
 `.github/workflows/sync.yml` runs every Monday morning AEST (or on demand from the Actions tab). It
 restores the database from the `data` release, syncs everything, and uploads the database and CSV
-exports back to that release. Add `PRODUCTHUNT_TOKEN`, `ABN_LOOKUP_GUID` and `ANTHROPIC_API_KEY` as
+exports back to that release. Add `PRODUCTHUNT_TOKEN`, `ABN_LOOKUP_GUID`, `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` and `ANTHROPIC_API_KEY` as
 repository secrets to include those sources and classification.
 
 ## Getting the free keys
@@ -71,4 +80,5 @@ repository secrets to include those sources and classification.
 - `au_industry`: ABS industry measures by year
 - `au_entities`: ABN Lookup results by query
 - `classifications`: Claude's tags per candidate
+- `market_map`: category to market
 - `runs`, `sync_state`: run log and incremental sync watermarks

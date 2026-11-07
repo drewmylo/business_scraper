@@ -70,11 +70,12 @@ SCHEMA = {
     "additionalProperties": False,
 }
 
-SYSTEM = f"""You classify small businesses and products found on Hacker News and Product Hunt, for a \
+SYSTEM = f"""You classify small businesses and products found on Hacker News, Reddit and Product Hunt, for a \
 founder in Australia looking for business models proven overseas that could work in Australia.
 
 For each item, return one object with the same id:
-- is_business: true if this is a product or business someone pays for or could pay for. False for \
+- is_business: true if this is a product or business someone pays for or could pay for, of any kind: \
+software, a trade or service business, a shop, a physical product, content. False for \
 articles, open-source libraries with no paid offering, games made for fun, personal sites, questions, \
 or comments that do not describe a specific business.
 - business_name: the product or company name, or "" if none.
@@ -127,7 +128,8 @@ def select_rows(conn, min_points: int = 200, limit: int | None = None) -> list:
         SELECT c.id, c.source, c.name, c.domain, c.title, c.description, c.revenue_text, c.popularity
         FROM candidates c LEFT JOIN classifications k ON k.candidate_id = c.id
         WHERE k.candidate_id IS NULL
-          AND (c.revenue_monthly IS NOT NULL OR c.source = 'hn_revenue_comment' OR c.popularity >= ?)
+          AND (c.revenue_monthly IS NOT NULL OR c.source IN ('hn_revenue_comment', 'reddit_comment')
+               OR (c.source != 'reddit_post' AND c.popularity >= ?))
         ORDER BY (c.revenue_monthly IS NOT NULL) DESC, c.popularity DESC
     """
     if limit:
