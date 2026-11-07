@@ -84,7 +84,8 @@ def existing_markets(conn) -> list[str]:
 
 def map_chunk(client, model: str, categories: list[str], markets: list[str]) -> list[dict] | None:
     known = "\n".join(markets) if markets else "(none yet)"
-    response = client.beta.messages.create(
+    # Long output (250 mappings), so stream: the SDK refuses non-streaming calls this large.
+    with client.beta.messages.stream(
         model=model,
         max_tokens=32000,
         betas=["server-side-fallback-2026-07-01"],
@@ -92,7 +93,8 @@ def map_chunk(client, model: str, categories: list[str], markets: list[str]) -> 
         output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
         system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": f"Existing markets:\n{known}\n\nCategories:\n{json.dumps(categories)}"}],
-    )
+    ) as stream:
+        response = stream.get_final_message()
     if response.stop_reason in ("refusal", "max_tokens"):
         log.warning("chunk skipped: stop_reason=%s", response.stop_reason)
         return None

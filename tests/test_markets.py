@@ -21,6 +21,17 @@ class FakeMessages:
     def __init__(self):
         self.calls = []
 
+    def stream(self, **kw):
+        msgs = self
+
+        class Ctx:
+            def __enter__(self):
+                return SimpleNamespace(get_final_message=lambda: msgs.create(**kw))
+
+            def __exit__(self, *a):
+                return False
+        return Ctx()
+
     def create(self, **kw):
         self.calls.append(kw)
         cats = json.loads(kw["messages"][0]["content"].split("Categories:\n", 1)[1])
