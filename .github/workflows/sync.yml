@@ -20,6 +20,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PRODUCTHUNT_TOKEN: ${{ secrets.PRODUCTHUNT_TOKEN }}
       ABN_LOOKUP_GUID: ${{ secrets.ABN_LOOKUP_GUID }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -41,6 +42,12 @@ jobs:
       - name: Sync all sources
         run: bizscraper sync all
 
+      - name: Classify new rows with Claude
+        if: env.ANTHROPIC_API_KEY != ''
+        timeout-minutes: 80        # resumable: an unfinished first pass continues next week
+        continue-on-error: true
+        run: bizscraper classify
+
       - name: Summary
         if: always()
         run: bizscraper stats | tee -a "$GITHUB_STEP_SUMMARY"
@@ -50,8 +57,9 @@ jobs:
         run: |
           bizscraper export --out data/candidates.csv
           bizscraper export --revenue-only --out data/candidates_with_revenue.csv
+          bizscraper categories --top 1000 --out data/categories.csv
           python -c "import sqlite3; c = sqlite3.connect('data/bizscraper.db'); c.execute('PRAGMA wal_checkpoint(TRUNCATE)'); c.execute('PRAGMA journal_mode=DELETE'); c.close()"
           gzip -kf data/bizscraper.db
           gzip -kf data/candidates.csv
           gh release view data >/dev/null 2>&1 || gh release create data --title "Latest data" --notes "Updated by the weekly sync workflow."
-          gh release upload data data/bizscraper.db.gz data/candidates.csv.gz data/candidates_with_revenue.csv --clobber
+          gh release upload data data/bizscraper.db.gz data/candidates.csv.gz data/candidates_with_revenue.csv data/categories.csv --clobber

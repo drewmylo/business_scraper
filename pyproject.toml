@@ -3,7 +3,7 @@ name = "bizscraper"
 version = "0.1.0"
 description = "Harvest overseas small businesses with revenue signals and check the Australian market for gaps"
 requires-python = ">=3.11"
-dependencies = ["requests>=2.31"]
+dependencies = ["requests>=2.31", "anthropic>=1.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

@@ -20,14 +20,33 @@ Revenue figures are pulled from text with patterns like "$10k MRR", "$3,500/mont
 normalised to per month and capped at $1M/month. They are a rough signal: a post can quote someone
 else's revenue. The next stage (LLM classification) will clean this up.
 
+## Classifying with Claude
+
+`bizscraper classify` sends rows to Claude (default model `claude-opus-5-5`, override with
+`BIZSCRAPER_MODEL`) 20 at a time and stores, per row: whether it is a real business, its name, a
+one-line description, buyer type, the customer's ANZSIC division, a market category, an Australian
+search phrase, and whether the revenue figure is the business's own (with a cleaned USD/month figure).
+
+It picks rows with a revenue figure, every revenue-thread comment, and Show HN / Product Hunt posts
+with at least `--min-points` (default 200). Today that is about 8,000 rows, roughly 400 requests;
+expect around $30 to $50 for the first pass on Opus 5.5 (an estimate, not measured), then a few
+dollars a week for new rows. Try `--limit 100` first to check quality and cost. Requests opt into
+server-side refusal fallbacks (`fallbacks: "default"`), so a declined batch is retried on another model.
+
+`bizscraper categories` then ranks markets by overseas proof: how many businesses share the category,
+how many report their own revenue, and the largest and total monthly revenue. These are the
+categories to take into the Australian checks.
+
 ## Running locally
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
-cp .env.example .env          # add keys if you have them
+cp .env.example .env          # add keys if you have them, incl. ANTHROPIC_API_KEY
 .venv/bin/bizscraper sync all
 .venv/bin/bizscraper stats
 .venv/bin/bizscraper export --revenue-only --out data/candidates_with_revenue.csv
+.venv/bin/bizscraper classify --limit 100   # trial run
+.venv/bin/bizscraper categories
 ```
 
 The first `hn-show` run backfills about 215,000 posts and takes about 4 minutes. Data goes to
@@ -37,8 +56,8 @@ The first `hn-show` run backfills about 215,000 posts and takes about 4 minutes.
 
 `.github/workflows/sync.yml` runs every Monday morning AEST (or on demand from the Actions tab). It
 restores the database from the `data` release, syncs everything, and uploads the database and CSV
-exports back to that release. Add `PRODUCTHUNT_TOKEN` and `ABN_LOOKUP_GUID` as repository secrets
-to include those sources.
+exports back to that release. Add `PRODUCTHUNT_TOKEN`, `ABN_LOOKUP_GUID` and `ANTHROPIC_API_KEY` as
+repository secrets to include those sources and classification.
 
 ## Getting the free keys
 
@@ -51,4 +70,5 @@ to include those sources.
 - `candidates`: one row per overseas business signal (source, name, domain, revenue, raw payload)
 - `au_industry`: ABS industry measures by year
 - `au_entities`: ABN Lookup results by query
+- `classifications`: Claude's tags per candidate
 - `runs`, `sync_state`: run log and incremental sync watermarks

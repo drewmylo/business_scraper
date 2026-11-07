@@ -96,6 +96,34 @@ def cmd_reparse(conn, args) -> int:
     return 0
 
 
+def cmd_classify(conn, args) -> int:
+    from . import classify
+    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+        log.error("set ANTHROPIC_API_KEY to classify (https://console.anthropic.com)")
+        return 1
+    n = classify.run(conn, min_points=args.min_points, limit=args.limit)
+    log.info("classified %d rows", n)
+    return 0
+
+
+def cmd_categories(conn, args) -> int:
+    from . import classify
+    rows = classify.categories_report(conn, top=args.top, min_items=args.min_items)
+    cols = ["category", "businesses", "with_revenue", "max_mrr_usd", "total_mrr_usd", "b2b", "industries", "search_phrase"]
+    if args.out:
+        with open(args.out, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(cols)
+            w.writerows([[r[c] for c in cols] for r in rows])
+        log.info("wrote %s", args.out)
+        return 0
+    print(f"{'category':45} {'biz':>4} {'rev':>4} {'max MRR':>9} {'B2B':>4}  industries")
+    for r in rows:
+        print(f"{r['category'][:45]:45} {r['businesses']:>4} {r['with_revenue'] or 0:>4} "
+              f"{r['max_mrr_usd'] or 0:>9,.0f} {r['b2b'] or 0:>4}  {r['industries']}")
+    return 0
+
+
 def cmd_export(conn, args) -> int:
     where = "WHERE revenue_monthly IS NOT NULL" if args.revenue_only else ""
     cols = ["source", "source_id", "name", "domain", "url", "title", "posted_at", "popularity", "comments",
@@ -134,6 +162,17 @@ def main(argv: list[str] | None = None) -> int:
 
     rp = sub.add_parser("reparse", help="re-run revenue extraction on stored rows")
     rp.set_defaults(fn=cmd_reparse)
+
+    c = sub.add_parser("classify", help="tag and group businesses with Claude (needs ANTHROPIC_API_KEY)")
+    c.add_argument("--min-points", type=int, default=200, help="Show HN / Product Hunt popularity threshold")
+    c.add_argument("--limit", type=int, help="classify at most this many rows")
+    c.set_defaults(fn=cmd_classify)
+
+    cg = sub.add_parser("categories", help="rank categories by overseas proof")
+    cg.add_argument("--top", type=int, default=50)
+    cg.add_argument("--min-items", type=int, default=2)
+    cg.add_argument("--out", help="write CSV instead of printing")
+    cg.set_defaults(fn=cmd_categories)
 
     e = sub.add_parser("export", help="export candidates to CSV")
     e.add_argument("--out", default="data/candidates.csv")
