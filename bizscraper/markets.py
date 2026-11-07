@@ -131,8 +131,10 @@ def report(conn, top: int = 60, min_items: int = 3, market_type: str | None = No
     if market_type:
         where, params = "AND m.market_type = ?", [market_type, min_items, top]
     return conn.execute(f"""
-        SELECT m.market, m.market_type, COUNT(*) AS businesses,
-               SUM(k.revenue_is_own) AS with_revenue,
+        SELECT m.market, m.market_type,
+               COUNT(DISTINCT COALESCE(NULLIF(LOWER(k.business_name), ''), k.candidate_id)) AS businesses,
+               COUNT(DISTINCT CASE WHEN k.revenue_is_own = 1
+                     THEN COALESCE(NULLIF(LOWER(k.business_name), ''), k.candidate_id) END) AS with_revenue,
                ROUND(MAX(k.revenue_monthly_usd)) AS max_mrr_usd,
                ROUND(SUM(COALESCE(k.revenue_monthly_usd, 0))) AS total_mrr_usd,
                ROUND(100.0 * SUM(k.buyer IN ('B2B', 'both')) / COUNT(*)) AS b2b_pct,
@@ -141,9 +143,10 @@ def report(conn, top: int = 60, min_items: int = 3, market_type: str | None = No
                    SELECT k2.business_name AS name FROM classifications k2
                    JOIN market_map m2 ON m2.category = k2.category
                    WHERE m2.market = m.market AND k2.is_business = 1 AND k2.business_name != ''
-                   ORDER BY k2.revenue_monthly_usd DESC NULLS LAST LIMIT 4)) AS examples
+                   GROUP BY LOWER(k2.business_name)
+                   ORDER BY MAX(k2.revenue_monthly_usd) DESC NULLS LAST LIMIT 5)) AS examples
         FROM classifications k JOIN market_map m ON m.category = k.category
         WHERE k.is_business = 1 AND m.market != 'unclear' {where}
-        GROUP BY m.market HAVING COUNT(*) >= ?
+        GROUP BY m.market HAVING businesses >= ?
         ORDER BY with_revenue DESC, total_mrr_usd DESC, businesses DESC
         LIMIT ?""", params).fetchall()
